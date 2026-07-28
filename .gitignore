@@ -16,6 +16,5 @@ robo_financeiro_ppo/
 # Arquivos do Sistema Operacional
 .DS_Store
 Thumbs.db
-
 # Logs e Dados Locais
 *.log
