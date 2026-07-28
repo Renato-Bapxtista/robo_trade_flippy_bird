@@ -1,0 +1,21 @@
+# Ambientes Virtuais
+.venv/
+env/
+venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Modelos da IA e Arquivos Pesados
+*.zip
+*.pkl
+*.pth
+robo_financeiro_ppo/
+
+# Arquivos do Sistema Operacional
+.DS_Store
+Thumbs.db
+
+# Logs e Dados Locais
+*.log
