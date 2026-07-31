@@ -4,9 +4,7 @@ import numpy as np
 import pandas as pd
 
 class AmbienteTrading(gymnasium.Env):
-    """Simulador Day Trade/Scalper: Com alvos curtos, time-out e custos de transação reais."""
-    
-    def __init__(self, df: pd.DataFrame, sl_pips: float = 0.0003, tp_pips: float = 0.0005):
+    def __init__(self, df: pd.DataFrame, sl_pips: float = 0.0005, tp_pips: float = 0.0010):
         super(AmbienteTrading, self).__init__()
         
         self.df = df.reset_index(drop=True)
@@ -15,16 +13,27 @@ class AmbienteTrading(gymnasium.Env):
         
         self.sl_pips = sl_pips
         self.tp_pips = tp_pips
-        
-        # [NOVO] Custo de transação real por trade (Spread + Taxas = 0.5 pip no EURUSD)
         self.custo_transacao = 0.00005
         
-        self.action_space = spaces.Discrete(3)
+        self.action_space = spaces.Discrete(3)  # 0: Venda, 1: Hold, 2: Compra
         self.observation_space = spaces.Box(
             low=-10.0, high=10.0, shape=(self.num_features,), dtype=np.float32
         )
         
         self.passo_atual = 0
+        
+        # Variáveis de controle do "Jogo" (Fases por Hora)
+        self.hora_atual_bloco = None
+        self.mortes_na_hora = 0       # "Mortes" = Stop Loss atingido
+        self.limite_mortes_hora = 3   # Exemplo: Máximo de 3 stops por fase/hora
+        
+        # Estado da Posição Atual
+        self.posicao_aberta = None    # None, "COMPRA" ou "VENDA"
+        self.preco_entrada = 0.0
+        self.alvo_sl = 0.0
+        self.alvo_tp = 0.0
+        self.duracao_trade = 0
+        self.max_duracao = 12         # Exemplo: 12 candles = 1 hora de trade máximo
 
     def _pegar_observacao(self):
         return np.array(self.df.iloc[self.passo_atual][self.colunas_features].values, dtype=np.float32)
@@ -32,71 +41,114 @@ class AmbienteTrading(gymnasium.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.passo_atual = 0
+        self.mortes_na_hora = 0
+        self.hora_atual_bloco = None
+        self.posicao_aberta = None
         return self._pegar_observacao(), {}
 
     def step(self, action):
-        # --- CASO AÇÃO SEJA 1: HOLD (ASSISTIR) ---
-        if action == 1:
-            self.passo_atual += 1
-            finalizado = self.passo_atual >= len(self.df) - 1
-            nova_observacao = self._pegar_observacao() if not finalizado else np.zeros((self.num_features,), dtype=np.float32)
-            return nova_observacao, 0.0, finalizado, False, {}
-            
-        # --- CASO AÇÃO SEJA 0 (VENDA) OU 2 (COMPRA) ---
-        preco_entrada = self.df.iloc[self.passo_atual]["close"]
-        operacao_encerrada = False
-        duracao_trade = 0 
-        max_duracao = 6 
+        row_atual = self.df.iloc[self.passo_atual]
+        timestamp_atual = row_atual["time"]
+        hora_cheia_atual = timestamp_atual.floor("h")
         
-        if action == 2:  # COMPRA
-            alvo_sl = preco_entrada - self.sl_pips
-            alvo_tp = preco_entrada + self.tp_pips
-            tipo_ordem = "COMPRA"
-        else:            # VENDA
-            alvo_sl = preco_entrada + self.sl_pips
-            alvo_tp = preco_entrada - self.tp_pips
-            tipo_ordem = "VENDA"
+        # --- TROCA DE FASE (Virada de Hora H1) ---
+        if self.hora_atual_bloco != hora_cheia_atual:
+            self.hora_atual_bloco = hora_cheia_atual
+            self.mortes_na_hora = 0  # Reseta as "vidas/mortes" para a nova fase!
+
+        recompensa = 0.0
+        fechou_trade_neste_passo = False
+
+        # =====================================================================
+        # 1. GERENCIAMENTO DE POSIÇÃO ABERTA (O Voo do Passarinho)
+        # =====================================================================
+        if self.posicao_aberta is not None:
+            self.duracao_trade += 1
             
-        while not operacao_encerrada:
-            self.passo_atual += 1
-            duracao_trade += 1
-            
-            if self.passo_atual >= len(self.df) - 1:
-                preco_final = self.df.iloc[-1]["close"]
-                recompensa_bruta = (preco_final - preco_entrada) / preco_entrada if tipo_ordem == "COMPRA" else (preco_entrada - preco_final) / preco_entrada
-                break
-                
-            preco_high = self.df.iloc[self.passo_atual]["high"]
-            preco_low = self.df.iloc[self.passo_atual]["low"]
-            preco_close = self.df.iloc[self.passo_atual]["close"]
-            
-            if tipo_ordem == "COMPRA":
-                if preco_low <= alvo_sl:
-                    recompensa_bruta = -self.sl_pips / preco_entrada
-                    operacao_encerrada = True
-                elif preco_high >= alvo_tp:
-                    recompensa_bruta = self.tp_pips / preco_entrada
-                    operacao_encerrada = True
-                elif duracao_trade >= max_duracao: 
-                    recompensa_bruta = (preco_close - preco_entrada) / preco_entrada
-                    operacao_encerrada = True
+            # Aqui definimos as variáveis para o Python não reclamar!
+            preco_high = row_atual["high"]
+            preco_low = row_atual["low"]
+            #preco_close = row_atual["close"]
+
+            if self.posicao_aberta == "COMPRA":
+                # Trailing Dinâmico Proporcional (Só sobe se der um respiro de 5 pips)
+                if preco_high > (self.preco_entrada + 0.0005):
+                    delta = preco_high - self.preco_entrada
+                    novo_sl = (self.preco_entrada - self.sl_pips) + delta
                     
-            elif tipo_ordem == "VENDA":
-                if preco_high >= alvo_sl:
-                    recompensa_bruta = -self.sl_pips / preco_entrada
-                    operacao_encerrada = True
-                elif preco_low <= alvo_tp:
-                    recompensa_bruta = self.tp_pips / preco_entrada
-                    operacao_encerrada = True
-                elif duracao_trade >= max_duracao: 
-                    recompensa_bruta = (preco_entrada - preco_close) / preco_entrada
-                    operacao_encerrada = True
+                    # SE ELE CONSEGUIU SUBIR A PROTEÇÃO, GANHA UM PONTINHO! (Reforço Positivo)
+                    if novo_sl > self.alvo_sl:
+                        recompensa += 0.0001  # Moedinha do Flippy Bird!
+                        self.alvo_sl = novo_sl
+                        self.alvo_tp = preco_high + self.tp_pips
+                
+                # Checa se Bateu no Stop ou Take
+                if preco_low <= self.alvo_sl:
+                    recompensa += (self.alvo_sl - self.preco_entrada) / self.preco_entrada
+                    if (self.alvo_sl - self.preco_entrada) < 0:
+                        self.mortes_na_hora += 1
+                    self.posicao_aberta = None
+                    fechou_trade_neste_passo = True
+                
+                elif preco_high >= self.alvo_tp:
+                    recompensa += (self.alvo_tp - self.preco_entrada) / self.preco_entrada
+                    self.posicao_aberta = None
+                    fechou_trade_neste_passo = True
+                    
+            elif self.posicao_aberta == "VENDA":
+                # Trailing Dinâmico Proporcional (Só desce se der um respiro de 5 pips)
+                if preco_low < (self.preco_entrada - 0.0005):
+                    delta = self.preco_entrada - preco_low
+                    novo_sl = (self.preco_entrada + self.sl_pips) - delta
+                    
+                    # SE ELE CONSEGUIU DESCER A PROTEÇÃO, GANHA UM PONTINHO!
+                    if novo_sl < self.alvo_sl:
+                        recompensa += 0.0001  # Moedinha do Flippy Bird!
+                        self.alvo_sl = novo_sl
+                        self.alvo_tp = preco_low - self.tp_pips
 
-        # [NOVO] Deduz o custo de transação do resultado final do trade (em percentual do preço)
-        custo_percentual = self.custo_transacao / preco_entrada
-        recompensa_final = recompensa_bruta - custo_percentual
+                if preco_high >= self.alvo_sl:
+                    recompensa += (self.preco_entrada - self.alvo_sl) / self.preco_entrada
+                    if (self.preco_entrada - self.alvo_sl) < 0:
+                        self.mortes_na_hora += 1
+                    self.posicao_aberta = None
+                    fechou_trade_neste_passo = True
+                
+                elif preco_low <= self.alvo_tp:
+                    recompensa += (self.preco_entrada - self.alvo_tp) / self.preco_entrada
+                    self.posicao_aberta = None
+                    fechou_trade_neste_passo = True
 
+        # =====================================================================
+        # 2. INTERPRETAÇÃO DA AÇÃO DO AGENTE (Se não estiver com trade fechando agora)
+        # =====================================================================
+        if self.posicao_aberta is None and not fechou_trade_neste_passo:
+            
+            # REGRA DA FASE: Se estourou o limite de mortes na hora, proíbe novas entradas (Força Hold)
+            if self.mortes_na_hora >= self.limite_mortes_hora:
+                action = 1  # Força Hold porque perdeu as vidas da fase!
+            
+            if action == 0:  # Tentar abrir VENDA
+                self.posicao_aberta = "VENDA"
+                self.preco_entrada = row_atual["close"]
+                self.alvo_sl = self.preco_entrada + self.sl_pips
+                self.alvo_tp = self.preco_entrada - self.tp_pips
+                self.duracao_trade = 0
+                recompensa -= (self.custo_transacao / self.preco_entrada)
+                
+            elif action == 2:  # Tentar abrir COMPRA
+                self.posicao_aberta = "COMPRA"
+                self.preco_entrada = row_atual["close"]
+                self.alvo_sl = self.preco_entrada - self.sl_pips
+                self.alvo_tp = self.preco_entrada + self.tp_pips
+                self.duracao_trade = 0
+                recompensa -= (self.custo_transacao / self.preco_entrada)
+            
+            # Se action == 1 (Hold), ele apenas plana sem abrir nada.
+
+        # Avança para o próximo candle de M5
+        self.passo_atual += 1
         finalizado = self.passo_atual >= len(self.df) - 1
-        nova_observacao = self._pegar_observacao() if not finalizado else np.zeros((self.num_features,), dtype=np.float32)
+        nova_obs = self._pegar_observacao() if not finalizado else np.zeros((self.num_features,), dtype=np.float32)
         
-        return nova_observacao, recompensa_final, finalizado, False, {}
+        return nova_obs, recompensa, finalizado, False, {}

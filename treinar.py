@@ -29,13 +29,13 @@ def executar_treinamento():
         env=env_treino, 
         verbose=1,
         learning_rate=0.0003,
-        ent_coef=0.02, # <--  Força a IA a explorar vendas e compras (padrão é 0.0)
-        batch_size=256 # <--  Ajuda a IA a aprender com lotes maiores de dados
+        ent_coef=0.05, # <--  Força a IA a explorar vendas e compras (padrão é 0.0)
+        batch_size=512 # <--  Ajuda a IA a aprender com lotes maiores de dados
     )
     
     print("\n--- PASSO 6: Iniciando Aprendizado por Reforço ---")
-    # Mandamos o robô rodar 50.000 passos (candles) dentro do mercado para praticar
-    model.learn(total_timesteps=500000, progress_bar=True)
+    # Mandamos o robô rodar 1.000.000 passos (candles) dentro do mercado para praticar
+    model.learn(total_timesteps=1000000, progress_bar=True)
     print()
     # Salva o cérebro treinado em um arquivo
     model.save("robo_financeiro_ppo")

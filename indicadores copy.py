@@ -1,5 +1,79 @@
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
+def prever_proximo_h1(df_h1: pd.DataFrame) -> pd.DataFrame:
+    """Treina uma IA rápida para prever o próximo candle H1 e gera as features preditivas."""
+    df = df_h1.copy()
+    
+    # =========================================================================
+    # 1. CRIAR OS ALVOS (TARGETS) DO FUTURO
+    # Usamos shift(-1) para trazer a resposta do próximo candle para a linha atual.
+    # Esses dados serão usados APENAS para treinar a IA, nunca para o robô operar!
+    # =========================================================================
+    
+    # Target 1: Direção (1 para Alta, 0 para Baixa)
+    df["alvo_direcao"] = np.where(df["close"].shift(-1) > df["open"].shift(-1), 1, 0)
+    
+    # Target 2: Distância/Tamanho do corpo do próximo candle
+    df["alvo_tamanho"] = (df["close"].shift(-1) - df["open"].shift(-1)).abs()
+    
+    # Target 3: Distância do próximo fechamento em relação à média das últimas 24h
+    media_diaria = df["close"].rolling(24, min_periods=1).mean()
+    df["alvo_dist_dia"] = (df["close"].shift(-1) - media_diaria.shift(-1)) / media_diaria.shift(-1)
+
+    # Removemos a última linha que ficou com alvos NaN por causa do shift(-1)
+    df = df.dropna(subset=["alvo_direcao", "alvo_tamanho", "alvo_dist_dia"])
+
+    # =========================================================================
+    # 2. DEFINIR AS FEATURES DE ENTRADA (O que a IA vai usar para adivinhar)
+    # =========================================================================
+    colunas_features = ["feat_macro_cruzamento", "feat_macro_rsi", "close", "open", "high", "low"]
+    
+    # =========================================================================
+    # 3. TREINAR A IA E GERAR PREVISÕES (Evitando Look-ahead Bias)
+    # Para ser rápido no processamento e seguro no backtest, prevemos a linha atual 
+    # treinando o modelo APENAS com os dados que vieram antes dela.
+    # =========================================================================
+    
+    # Inicializamos as colunas de previsão com zero
+    df["feat_ia_prev_direcao"] = 0.0
+    df["feat_ia_prev_tamanho"] = 0.0
+    df["feat_ia_prev_dist_dia"] = 0.0
+    
+    # Modelos Leves de Machine Learning
+    clf_direcao = RandomForestClassifier(n_estimators=20, max_depth=5, random_state=42)
+    reg_tamanho = RandomForestRegressor(n_estimators=20, max_depth=5, random_state=42)
+    reg_dist_dia = RandomForestRegressor(n_estimators=20, max_depth=5, random_state=42)
+
+    # Simulando o tempo passando (Treina no passado, prevê o presente)
+    # Começamos a prever a partir do candle 100 para ter histórico mínimo de treino
+    for i in range(100, len(df)):
+        # Pega do início até o candle ANTERIOR ao atual
+        X_treino = df[colunas_features].iloc[:i]
+        
+        # Pega a linha ATUAL para prever o futuro dela
+        X_atual = df[colunas_features].iloc[[i]]
+        
+        # Treina e Prevê Direção
+        y_treino_dir = df["alvo_direcao"].iloc[:i]
+        clf_direcao.fit(X_treino, y_treino_dir)
+        df.loc[df.index[i], "feat_ia_prev_direcao"] = clf_direcao.predict(X_atual)[0]
+        
+        # Treina e Prevê Tamanho
+        y_treino_tam = df["alvo_tamanho"].iloc[:i]
+        reg_tamanho.fit(X_treino, y_treino_tam)
+        df.loc[df.index[i], "feat_ia_prev_tamanho"] = reg_tamanho.predict(X_atual)[0]
+        
+        # Treina e Prevê Distância do Dia
+        y_treino_dist = df["alvo_dist_dia"].iloc[:i]
+        reg_dist_dia.fit(X_treino, y_treino_dist)
+        df.loc[df.index[i], "feat_ia_prev_dist_dia"] = reg_dist_dia.predict(X_atual)[0]
+
+    # Removemos as colunas de "gabarito/alvo" para o PPO não trapacear lendo o futuro exato
+    df = df.drop(columns=["alvo_direcao", "alvo_tamanho", "alvo_dist_dia"])
+    
+    return df
 
 def calcular_rsi(close: pd.Series, periodo: int = 14) -> pd.Series:
     """RSI de Wilder calculado somente com barras já encerradas."""
@@ -18,17 +92,16 @@ def calcular_rsi(close: pd.Series, periodo: int = 14) -> pd.Series:
     return rsi.fillna(50.0)
 
 def preparar_dados_mercado(df: pd.DataFrame, janela_sup_res: int = 50) -> pd.DataFrame:
-    """Calcula indicadores M5 e injeta a tendência macro do gráfico H1 sem lookahead bias."""
+    """Calcula M5 e injeta tendências macro (H1 e D1) usando Shift para evitar Lookahead."""
     obrigatorias = {"time", "open", "high", "low", "close", "tick_volume"}
     faltantes = obrigatorias.difference(df.columns)
     if faltantes:
         raise ValueError(f"Dados sem colunas obrigatórias: {sorted(faltantes)}")
         
-    # Garante que 'time' seja datetime para evitar erros no .dt
     dados = df.copy().sort_values("time").drop_duplicates("time").reset_index(drop=True)
     if not pd.api.types.is_datetime64_any_dtype(dados['time']):
         dados['time'] = pd.to_datetime(dados['time'])
-    
+
     # =========================================================================
     # 🕒 CÁLCULO MULTITIMEFRAME (H1 a partir do M5)
     # =========================================================================
@@ -39,25 +112,75 @@ def preparar_dados_mercado(df: pd.DataFrame, janela_sup_res: int = 50) -> pd.Dat
         "close": "last"
     }).dropna().reset_index()
     
-    # Indicadores do Gráfico de 1 Hora (Macro)
+    # Indicadores básicos do H1
     df_h1["ema_21_h1"] = df_h1["close"].ewm(span=21, adjust=False).mean()
     df_h1["ema_200_h1"] = df_h1["close"].ewm(span=200, adjust=False).mean()
     df_h1["rsi_14_h1"] = calcular_rsi(df_h1["close"])
     
-    # Features Relativas do H1
+    df_h1["feat_macro_cruzamento"] = (df_h1["ema_21_h1"] - df_h1["ema_200_h1"]) / df_h1["ema_200_h1"]
+    df_h1["feat_macro_rsi"] = (df_h1["rsi_14_h1"] - 50.0) / 50.0
+
+    # =========================================================================
+    # 🧠 AQUI ENTRA A CHAMADA DA IA PREDITIVA!
+    # Passamos o df_h1 para a IA estudar e devolver com as colunas de previsão
+    # =========================================================================
+    df_h1 = prever_proximo_h1(df_h1)
+    
+    # Agora separamos apenas as features que o robô vai ler (incluindo as novas da IA)
+    df_h1_features = df_h1[[
+        "time", 
+        "feat_macro_cruzamento", 
+        "feat_macro_rsi",
+        "feat_ia_prev_direcao",   # <-- Nova coluna da IA
+        "feat_ia_prev_tamanho",   # <-- Nova coluna da IA
+        "feat_ia_prev_dist_dia"   # <-- Nova coluna da IA
+    ]].copy()
+    
+    # Deslocamos o tempo H1 em 1 hora para frente (como você já fazia)
+    df_h1_features["hora_chave"] = df_h1_features["time"] + pd.Timedelta(hours=1)
+    df_h1_features = df_h1_features.drop(columns=["time"])
+    
+    """ # =========================================================================
+    # 🕒 1. CÁLCULO MACRO H1
+    # =========================================================================
+    df_h1 = dados.set_index("time").resample("1h", closed='left', label='left').agg({
+        "open": "first", "high": "max", "low": "min", "close": "last"
+    }).dropna().reset_index()
+    
+    df_h1["ema_21_h1"] = df_h1["close"].ewm(span=21, adjust=False).mean()
+    df_h1["ema_200_h1"] = df_h1["close"].ewm(span=200, adjust=False).mean()
+    df_h1["rsi_14_h1"] = calcular_rsi(df_h1["close"])
+    
     df_h1["feat_macro_cruzamento"] = (df_h1["ema_21_h1"] - df_h1["ema_200_h1"]) / df_h1["ema_200_h1"]
     df_h1["feat_macro_rsi"] = (df_h1["rsi_14_h1"] - 50.0) / 50.0
     
-    # Guardamos apenas o tempo e as features do H1
     df_h1_features = df_h1[["time", "feat_macro_cruzamento", "feat_macro_rsi"]].copy()
-    
-    # [CORREÇÃO CRÍTICA]: Deslocamos o tempo H1 em 1 hora para frente.
-    # O candle de 09:00 (que fecha às 10:00) será disponibilizado apenas a partir das 10:00.
-    df_h1_features["hora_chave"] = df_h1_features["time"] + pd.Timedelta(hours=1)
-    df_h1_features = df_h1_features.drop(columns=["time"])
+    # SHIFT(1): Desloca o H1 para a próxima hora. O M5 de 10h vai ler os dados que fecharam 09h.
+    df_h1_features.iloc[:, 1:] = df_h1_features.iloc[:, 1:].shift(1)
+    df_h1_features = df_h1_features.dropna().rename(columns={"time": "hora_chave"}) """
+
     # =========================================================================
+    # 📅 2. CÁLCULO MACRO DIÁRIO (D1)
+    # =========================================================================
+    df_d1 = dados.set_index("time").resample("1D", closed='left', label='left').agg({
+        "open": "first", "high": "max", "low": "min", "close": "last"
+    }).dropna().reset_index()
     
-    # --- 1. Cálculos de Indicadores M5 (Calor do Momento) ---
+    df_d1["ema_21_d1"] = df_d1["close"].ewm(span=21, adjust=False).mean()
+    df_d1["ema_200_d1"] = df_d1["close"].ewm(span=200, adjust=False).mean()
+    df_d1["rsi_14_d1"] = calcular_rsi(df_d1["close"])
+    
+    df_d1["feat_diario_cruzamento"] = (df_d1["ema_21_d1"] - df_d1["ema_200_d1"]) / df_d1["ema_200_d1"]
+    df_d1["feat_diario_rsi"] = (df_d1["rsi_14_d1"] - 50.0) / 50.0
+    
+    df_d1_features = df_d1[["time", "feat_diario_cruzamento", "feat_diario_rsi"]].copy()
+    # SHIFT(1): Desloca o D1 para o próximo dia útil. O M5 de hoje só vê como o mercado fechou ontem.
+    df_d1_features.iloc[:, 1:] = df_d1_features.iloc[:, 1:].shift(1)
+    df_d1_features = df_d1_features.dropna().rename(columns={"time": "dia_chave"})
+
+    # =========================================================================
+    # ⚡ 3. CÁLCULOS DO CALOR DO MOMENTO (M5)
+    # =========================================================================
     dados["atr_14"] = (dados["high"] - dados["low"]).rolling(14, min_periods=14).mean()
     dados["media_atr"] = dados["atr_14"].rolling(20, min_periods=20).mean()
     dados["ema_21"] = dados["close"].ewm(span=21, adjust=False, min_periods=21).mean()
@@ -70,7 +193,7 @@ def preparar_dados_mercado(df: pd.DataFrame, janela_sup_res: int = 50) -> pd.Dat
     
     dados = dados.dropna().reset_index(drop=True)
     
-    # --- 2. Engenharia de Features M5 ---
+    # Engenharia de Features M5
     dados["feat_dist_ema21"] = (dados["close"] - dados["ema_21"]) / dados["ema_21"]
     dados["feat_dist_ema200"] = (dados["close"] - dados["ema_200"]) / dados["ema_200"]
     dados["feat_dist_suporte"] = (dados["close"] - dados["suporte"]) / dados["suporte"]
@@ -82,27 +205,21 @@ def preparar_dados_mercado(df: pd.DataFrame, janela_sup_res: int = 50) -> pd.Dat
     dados["feat_momento_5"] = dados["retorno_5"] * 100.0
     
     # =========================================================================
-    # 🧩 SINCRONISMO DOS TEMPOS SEM LOOKAHEAD BIAS
+    # 🧩 4. SINCRONISMO DOS TEMPOS (MERGE H1 e D1 NO M5)
     # =========================================================================
     dados["hora_chave"] = dados["time"].dt.floor("1h")
+    dados["dia_chave"] = dados["time"].dt.floor("1D")
     
-    # [CORREÇÃO]: Sintaxe do merge arrumada
+    # Anexando H1
     dados = pd.merge(dados, df_h1_features, on="hora_chave", how="left")
+    # Anexando D1
+    dados = pd.merge(dados, df_d1_features, on="dia_chave", how="left")
     
-    # Preenche possíveis lacunas e remove as colunas de controle
-    dados["feat_macro_cruzamento"] = dados["feat_macro_cruzamento"].ffill().fillna(0.0)
-    dados["feat_macro_rsi"] = dados["feat_macro_rsi"].ffill().fillna(0.0)
+    # Forward Fill nas novas colunas para garantir cobertura em caso de feriados/buracos
+    colunas_macro = ["feat_macro_cruzamento", "feat_macro_rsi", "feat_diario_cruzamento", "feat_diario_rsi"]
+    dados[colunas_macro] = dados[colunas_macro].ffill().fillna(0.0)
     
-    dados = dados.drop(columns=["hora_chave"])
-    # =========================================================================
+    # Limpeza final
+    dados = dados.drop(columns=["hora_chave", "dia_chave"])
     
     return dados.dropna().reset_index(drop=True)
-
-if __name__ == "__main__":
-    from dados import obter_dados_mt5
-    from datetime import datetime, timezone
-    df_bruto = obter_dados_mt5(ativo="EURUSD", inicio=datetime(2024, 1, 1, tzinfo=timezone.utc))
-    df_processado = preparar_dados_mercado(df_bruto)
-    colunas_ia = [col for col in df_processado.columns if col.startswith("feat_")]
-    print(f"Sucesso! Total de features (M5 + Macro H1): {len(colunas_ia)}")
-    print("Novas colunas macro anexadas:", [c for c in colunas_ia if "macro" in c])
