@@ -13,7 +13,7 @@ class AmbienteTrading(gymnasium.Env):
         
         self.sl_pips = sl_pips
         self.tp_pips = tp_pips
-        self.custo_transacao = 0.00005
+        self.custo_transacao = 0.0003
         
         self.action_space = spaces.Discrete(3)  # 0: Venda, 1: Hold, 2: Compra
         self.observation_space = spaces.Box(

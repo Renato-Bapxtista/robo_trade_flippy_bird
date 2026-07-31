@@ -80,3 +80,27 @@ python operar_live.py
 ```
 
 Aviso: Este é um projeto de estudo sobre Aprendizado por Reforço no mercado financeiro. Não utilize em conta real sem testes exaustivos. O autor não se responsabiliza por perdas financeiras.
+
+#### 📊 Relatório de Treinamento e Validação - Flippy Bird Bot
+
+## 🚀 Último Treinamento (1 Milhão de Timesteps)
+
+- **Modelo Salvo:** `robo_financeiro_ppo.zip`
+- **Data/Hora:** Março de 2026
+
+## 📈 Resultado da Validação (Dados Invisíveis)
+
+```text
+================ RELATÓRIO DE PERFORMANCE (3 AÇÕES) ================
+Decisões de Análise Técnica:
+ ⏸️ Quantidade de vezes em HOLD (Ficou de Fora): 687
+ 🟢 Ordens de COMPRA (Long): 82
+ 🔴 Ordens de VENDA (Short): 5718
+---------------------------------------------------------------------
+Total de Trades Efetivamente Fechados: 5800
+ 🔥 Operações com LUCRO (TP/Trailing): 784
+ 💀 Operações com PREJUÍZO (SL): 866
+ 🎯 Taxa de Acerto Real dos Trades: 13.52%
+---------------------------------------------------------------------
+ 💰 RETORNO ACUMULADO FINAL DO ROBÔ: -0.415%
+=====================================================================
