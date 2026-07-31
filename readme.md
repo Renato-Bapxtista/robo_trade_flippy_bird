@@ -93,14 +93,14 @@ Aviso: Este é um projeto de estudo sobre Aprendizado por Reforço no mercado fi
 ```text
 ================ RELATÓRIO DE PERFORMANCE (3 AÇÕES) ================
 Decisões de Análise Técnica:
- ⏸️ Quantidade de vezes em HOLD (Ficou de Fora): 687
- 🟢 Ordens de COMPRA (Long): 82
- 🔴 Ordens de VENDA (Short): 5718
+ ⏸️ Quantidade de vezes em HOLD (Ficou de Fora): 6483
+ 🟢 Ordens de COMPRA (Long): 0
+ 🔴 Ordens de VENDA (Short): 5
 ---------------------------------------------------------------------
-Total de Trades Efetivamente Fechados: 5800
- 🔥 Operações com LUCRO (TP/Trailing): 784
- 💀 Operações com PREJUÍZO (SL): 866
- 🎯 Taxa de Acerto Real dos Trades: 13.52%
+Total de Trades Efetivamente Fechados: 5
+ 🔥 Operações com LUCRO (TP/Trailing): 0
+ 💀 Operações com PREJUÍZO (SL): 3
+ 🎯 Taxa de Acerto Real dos Trades: 0.0%
 ---------------------------------------------------------------------
- 💰 RETORNO ACUMULADO FINAL DO ROBÔ: -0.415%
+ 💰 RETORNO ACUMULADO FINAL DO ROBÔ: -0.096%
 =====================================================================
