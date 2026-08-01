@@ -6,7 +6,7 @@ import pandas as pd
 from stable_baselines3 import PPO
 
 # Importamos as regras de indicadores que criamos juntos
-from indicadores import preparar_dados_mercado
+from indicadores_copy import preparar_dados_mercado
 
 def enviar_ordem_mercado(ativo, tipo_ordem, volume=1.0, sl_pips=0.0003, tp_pips=0.0005):
     """Envia uma ordem real de Compra ou Venda com SL e TP automáticos para o MT5."""

@@ -6,7 +6,7 @@ import pandas as pd
 class AmbienteTrading(gymnasium.Env):
     def __init__(self, df: pd.DataFrame, sl_pips: float = 0.0005, tp_pips: float = 0.0010):
         super(AmbienteTrading, self).__init__()
-        
+        self.pips_respiro_trailing = 0.0005  # Equivalente a 5 pips no EURUSD
         self.df = df.reset_index(drop=True)
         self.colunas_features = [col for col in df.columns if col.startswith("feat_")]
         self.num_features = len(self.colunas_features)
@@ -25,7 +25,7 @@ class AmbienteTrading(gymnasium.Env):
         # Variáveis de controle do "Jogo" (Fases por Hora)
         self.hora_atual_bloco = None
         self.mortes_na_hora = 0       # "Mortes" = Stop Loss atingido
-        self.limite_mortes_hora = 3   # Exemplo: Máximo de 3 stops por fase/hora
+        self.limite_mortes_hora = 10  # Exemplo: Máximo de 10 stops por fase/hora
         
         # Estado da Posição Atual
         self.posicao_aberta = None    # None, "COMPRA" ou "VENDA"
@@ -110,11 +110,11 @@ class AmbienteTrading(gymnasium.Env):
             self.duracao_trade += 1
             
             if self.posicao_aberta == "COMPRA":
-                if preco_high > (self.preco_entrada + 0.0005):
+                if preco_high > (self.preco_entrada + self.pips_respiro_trailing):
                     delta = preco_high - self.preco_entrada
                     novo_sl = (self.preco_entrada - self.sl_pips) + delta
                     if novo_sl > self.alvo_sl:
-                        recompensa += 0.0001  # Moedinha!
+                        recompensa += 0.00015  # Moedinha!
                         self.alvo_sl = novo_sl
                         self.alvo_tp = preco_high + self.tp_pips
                 
@@ -130,11 +130,11 @@ class AmbienteTrading(gymnasium.Env):
                     fechou_trade_neste_passo = True
                     
             elif self.posicao_aberta == "VENDA":
-                if preco_low < (self.preco_entrada - 0.0005):
+                if preco_low < (self.preco_entrada - self.pips_respiro_trailing):
                     delta = self.preco_entrada - preco_low
                     novo_sl = (self.preco_entrada + self.sl_pips) - delta
                     if novo_sl < self.alvo_sl:
-                        recompensa += 0.0001  # Moedinha!
+                        recompensa += 0.00015  # Moedinha!
                         self.alvo_sl = novo_sl
                         self.alvo_tp = preco_low - self.tp_pips
 
