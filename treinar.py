@@ -19,7 +19,8 @@ def executar_treinamento():
     
     print("\n--- PASSO 4: Inicializando o Ambiente do Simulador ---")
     # Criamos o ambiente do jogo passando apenas os dados de treino
-    env_treino = AmbienteTrading(df_treino)
+    # Limit episode length to speed up learning and provide more update signals
+    env_treino = AmbienteTrading(df_treino, max_episode_steps=1000)
     
     print("\n--- PASSO 5: Configurando o Cérebro da IA (PPO) ---")
     # Criamos o modelo de Inteligência Artificial

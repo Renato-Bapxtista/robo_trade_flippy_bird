@@ -6,7 +6,7 @@ import pandas as pd
 from stable_baselines3 import PPO
 
 # Importamos as regras de indicadores que criamos juntos
-from indicadores_copy import preparar_dados_mercado
+from indicadores import preparar_dados_mercado
 
 def enviar_ordem_mercado(ativo, tipo_ordem, volume=1.0, sl_pips=0.0003, tp_pips=0.0005):
     """Envia uma ordem real de Compra ou Venda com SL e TP automáticos para o MT5."""
@@ -81,7 +81,7 @@ def rodar_operador_live(ativo="EURUSD"):
                 
             # 3. Puxa histórico recente corrigido em UTC
             agora_utc = datetime.now(timezone.utc)
-            dados_brutos = mt5.copy_rates_from(ativo, mt5.TIMEFRAME_M5, agora_utc, 300)
+            dados_brutos = mt5.copy_rates_from(ativo, mt5.TIMEFRAME_M5, agora_utc, 600)
             
             if dados_brutos is None or len(dados_brutos) == 0:
                 print("⚠️ Falha ao ler candles do MT5. Tentando novamente...")

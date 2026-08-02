@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 class AmbienteTrading(gymnasium.Env):
-    def __init__(self, df: pd.DataFrame, sl_pips: float = 0.0005, tp_pips: float = 0.0010):
+    def __init__(self, df: pd.DataFrame, sl_pips: float = 0.0005, tp_pips: float = 0.0010, max_episode_steps: int | None = None):
         super(AmbienteTrading, self).__init__()
         self.pips_respiro_trailing = 0.0005  # Equivalente a 5 pips no EURUSD
         self.df = df.reset_index(drop=True)
@@ -34,6 +34,9 @@ class AmbienteTrading(gymnasium.Env):
         self.alvo_tp = 0.0
         self.duracao_trade = 0
         self.max_duracao = 12         # Exemplo: 12 candles = 1 hora de trade máximo
+        # Controle de steps por episódio (limita comprimento do episódio)
+        self.max_episode_steps = max_episode_steps
+        self._step_count = 0
 
     def _pegar_observacao(self):
         return np.array(self.df.iloc[self.passo_atual][self.colunas_features].values, dtype=np.float32)
@@ -44,6 +47,7 @@ class AmbienteTrading(gymnasium.Env):
         self.mortes_na_hora = 0
         self.hora_atual_bloco = None
         self.posicao_aberta = None
+        self._step_count = 0
         return self._pegar_observacao(), {}
 
     def step(self, action):
@@ -174,7 +178,8 @@ class AmbienteTrading(gymnasium.Env):
 
         # Avança para o próximo candle
         self.passo_atual += 1
-        finalizado = self.passo_atual >= len(self.df) - 1
+        self._step_count += 1
+        finalizado = self.passo_atual >= len(self.df) - 1 or (self.max_episode_steps is not None and self._step_count >= self.max_episode_steps)
         nova_obs = self._pegar_observacao() if not finalizado else np.zeros((self.num_features,), dtype=np.float32)
         
         return nova_obs, recompensa, finalizado, False, {}

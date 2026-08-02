@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import time
+import os
 import MetaTrader5 as mt5
 import pandas as pd
 
@@ -7,47 +9,68 @@ def _utc(data):
         return data.replace(tzinfo=timezone.utc)
     return data.astimezone(timezone.utc)
 
-def obter_dados_mt5(ativo="EURUSD", timeframe=mt5.TIMEFRAME_M5, inicio=datetime(2024, 1, 1, tzinfo=timezone.utc), fim=None) -> pd.DataFrame:
+
+def obter_dados_mt5(ativo="EURUSD", timeframe=mt5.TIMEFRAME_M5, inicio=datetime(2024, 1, 1, tzinfo=timezone.utc), fim=None, retries: int = 6, wait_seconds: int = 3, local_fallback: str | None = None) -> pd.DataFrame:
+    """Tenta obter candles do MT5 com várias tentativas.
+
+    Se não conseguir, e `local_fallback` for um caminho válido, carrega CSV local.
+    """
     if not mt5.initialize():
         raise RuntimeError(f"Não foi possível inicializar MT5: {mt5.last_error()}")
-    
+
     try:
         if not mt5.symbol_select(ativo, True):
             raise RuntimeError(f"Ativo indisponível no MT5: {ativo}")
-        
-        # --- FORÇA O MT5 A SINCRONIZAR O HISTÓRICO COM O SERVIDOR ---
-        # Abre o ativo no Market Watch para disparar o download em segundo plano
-        mt5.market_book_add(ativo) 
-        
+
+        # força o MT5 a sincronizar histórico abrindo o ativo no Market Watch
+        mt5.market_book_add(ativo)
+
         inicio_utc = _utc(inicio)
         fim_utc = _utc(fim or datetime.now(timezone.utc))
-        
+
         if inicio_utc >= fim_utc:
             raise ValueError("A data inicial deve ser anterior à data final.")
-            
+
         print(f"Sincronizando histórico de {ativo} desde {inicio_utc.year}... Aguarde.")
-        dados = mt5.copy_rates_range(ativo, timeframe, inicio_utc, fim_utc)
-        
-        # Se falhar na primeira tentativa (dados ainda baixando), espera 3 segundos e tenta de novo
-        if dados is None or len(dados) == 0:
-            import time
-            print("Dados antigos ainda estão sendo baixados pelo MT5... Tentando novamente em 3 segundos.")
-            time.sleep(3)
+
+        dados = None
+        for attempt in range(retries):
             dados = mt5.copy_rates_range(ativo, timeframe, inicio_utc, fim_utc)
-            
+            if dados is not None and len(dados) > 0:
+                break
+            wait = wait_seconds * (attempt + 1)
+            print(f"Dados ainda sendo baixados pelo MT5... tentativa {attempt+1}/{retries}. Aguardando {wait}s.")
+            time.sleep(wait)
+
         if dados is None or len(dados) == 0:
-            raise RuntimeError(f"MT5 não retornou candles. Verifique as configurações de 'Max Bars' no terminal.")
-            
+            # fallback para CSV local, se fornecido
+            if local_fallback and os.path.exists(local_fallback):
+                print(f"MT5 falhou — carregando fallback local: {local_fallback}")
+                df = pd.read_csv(local_fallback)
+                if 'time' in df.columns:
+                    df['time'] = pd.to_datetime(df['time'])
+                return df
+
+            # informação adicional para o usuário sobre possíveis causas
+            last_err = mt5.last_error()
+            raise RuntimeError(
+                "MT5 não retornou candles. Verifique: terminal logado, símbolo no Market Watch, 'Max Bars in History' nas opções do MT5. "
+                f"Último erro MT5: {last_err}"
+            )
+
         df = pd.DataFrame(dados)
         df["time"] = pd.to_datetime(df["time"], unit="s")
-        
-        df["price_range"] = df["high"] - df["low"] 
-        df["price_volume"] = df["price_range"] * df["tick_volume"] 
-        df["real_volume"] = df["real_volume"] 
-        
+
+        df["price_range"] = df["high"] - df["low"]
+        df["price_volume"] = df["price_range"] * df["tick_volume"]
+        df["real_volume"] = df["real_volume"]
+
         return df
     finally:
-        mt5.market_book_release(ativo)
+        try:
+            mt5.market_book_release(ativo)
+        except Exception:
+            pass
         mt5.shutdown()
 
 
