@@ -18,3 +18,7 @@ robo_financeiro_ppo/
 Thumbs.db
 # Logs e Dados Locais
 *.log
+
+# Dados e relatórios gerados localmente
+para/
+diagnostics/
