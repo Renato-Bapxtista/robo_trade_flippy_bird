@@ -104,3 +104,43 @@ Total de Trades Efetivamente Fechados: 54
 ---------------------------------------------------------------------
  💰 RETORNO ACUMULADO FINAL DO ROBÔ: 0.056%
 =====================================================================
+## 🛠️ Atualizações recentes (2026-08-01)
+
+```
+
+## Novas melhorias introduzidas neste commit:
+
+- Persistência do modelo preditivo H1:
+
+	- Adicionado `h1_train.py` para treinar e salvar os modelos H1 em `models/h1_models.joblib`.
+	- `indicadores.py` agora tenta carregar `models/h1_models.joblib` para inferência rápida no pipeline (evita treinar RandomForest repetidamente).
+
+- Robustez na coleta de dados MT5:
+	- `dados.py` passou a fazer várias tentativas com backoff e aceita um fallback CSV local via `--local-csv`.
+
+- Performance e estabilidade do treino:
+	- `AmbienteTrading` (`ambiente.py`) agora aceita `max_episode_steps` para limitar o comprimento dos episódios e acelerar atualização do PPO.
+	- `treinar.py` já passa `max_episode_steps=1000` por padrão para experimentos iniciantes.
+
+- Limpeza de cópias duplicadas:
+	- Removidas versões paralelas `ambiente copy.py` e `indicadores_copy.py` para evitar confusão entre treino e live.
+
+Como usar as novas ferramentas
+
+- Treinar e salvar os modelos H1 (usa MT5 se disponível, ou `--local-csv` como fallback):
+
+```bash
+python h1_train.py --local-csv path/to/m5.csv
+```
+
+- Após gerar `models/h1_models.joblib`, re-treine o PPO (usa previsões H1 carregadas):
+
+```bash
+python treinar.py
+```
+
+- Modo live continuará lendo o pipeline único de `indicadores.py` (sem treinos H1 online):
+
+```bash
+python operar_live.py
+```
